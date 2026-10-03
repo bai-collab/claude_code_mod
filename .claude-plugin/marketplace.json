@@ -1,0 +1,11 @@
+{
+  "name": "claude-code-mod",
+  "owner": { "name": "bai-collab" },
+  "plugins": [
+    {
+      "name": "prompt-optimizer",
+      "source": "./plugins/prompt-optimizer",
+      "description": "Attaches hidden clarify-or-proceed guidance to short or vague prompts"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "prompt-optimizer",
+  "version": "0.1.0",
+  "description": "Attaches hidden clarify-or-proceed guidance to short or vague prompts",
+  "author": {
+    "name": "bai-collab"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Mode",
+      "description": "short-only: guide prompts shorter than minLength; always: guide every prompt; off: disabled",
+      "options": [
+        "short-only",
+        "always",
+        "off"
+      ],
+      "default": "short-only"
+    },
+    "minLength": {
+      "type": "number",
+      "title": "Short prompt threshold",
+      "description": "In short-only mode, prompts with fewer characters than this get the guidance",
+      "default": 80
+    }
+  }
+}
