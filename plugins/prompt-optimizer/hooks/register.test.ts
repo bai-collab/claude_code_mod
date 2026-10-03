@@ -82,4 +82,41 @@ describe('prompt-optimizer', () => {
     expect(ran).toEqual({ text: 'prompt-optimizer paused for this session.' })
     expect(seen).toEqual(undefined)
   })
+
+  test('a bare "* " is sent as typed, never emptied', async ($, on) => {
+    let text = 'unset'
+    on('prompt.submit', (_, e) => {
+      text = e.text
+      return { text: e.text }
+    })
+
+    await $.prompt.submit({ text: '*  ', wait: false, origin: composer })
+
+    expect(text).toBe('*  ')
+  })
+
+  test('a long prompt keeps its leading "* "', async ($, on) => {
+    const list = '* ' + 'item '.repeat(40)
+    let text = ''
+    on('prompt.submit', (_, e) => {
+      text = e.text
+      return { text: e.text }
+    })
+
+    await $.prompt.submit({ text: list, wait: false, origin: composer })
+
+    expect(text).toBe(list)
+  })
+
+  test('off mode keeps the leading "* "', { options: { mode: 'off' } }, async ($, on) => {
+    let text = ''
+    on('prompt.submit', (_, e) => {
+      text = e.text
+      return { text: e.text }
+    })
+
+    await $.prompt.submit({ text: '* fix', wait: false, origin: composer })
+
+    expect(text).toBe('* fix')
+  })
 })

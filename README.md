@@ -29,7 +29,7 @@ You can also try the marketplace route (not yet verified for function-hook plugi
 | Usage | Effect |
 | --- | --- |
 | Type a prompt as usual | In `short-only` mode, prompts under 80 characters get the guidance |
-| Start the prompt with `*` | Skips the guidance for that one prompt (the `*` is removed) |
+| Start the prompt with `* ` (asterisk + space) | Skips the guidance for that one prompt. The `* ` is removed only when the guidance would otherwise apply |
 | `/prompt-optimizer` | Pauses or resumes the plugin for the current session |
 | `/config` | Change `mode` (`short-only` / `always` / `off`) and `minLength` |
 
