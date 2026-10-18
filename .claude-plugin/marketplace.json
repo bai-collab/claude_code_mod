@@ -1,11 +1,18 @@
 {
   "name": "claude-code-mod",
-  "owner": { "name": "bai-collab" },
+  "owner": {
+    "name": "bai-collab"
+  },
   "plugins": [
     {
       "name": "prompt-optimizer",
       "source": "./plugins/prompt-optimizer",
       "description": "Attaches hidden clarify-or-proceed guidance to short or vague prompts"
+    },
+    {
+      "name": "session-picker",
+      "source": "./plugins/session-picker",
+      "description": "Control panel: unfinished-session list with click-to-resume, Tool/MCP/Flow/Memory tabs, an always-visible button band, and copy buttons for paths/URLs in replies"
     }
   ]
 }
