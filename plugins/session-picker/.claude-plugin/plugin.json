@@ -1,7 +1,7 @@
 {
   "name": "session-picker",
-  "version": "0.5.1",
-  "description": "控制台：輸入框上方的 Session／Tool／MCP／流程／記憶 按鈕與側邊面板（未結案 session 點選切換、工具清單、MCP 伺服器啟用／停用、計畫進度與本 session 即時活動、記憶檔檢視與複製路徑；回覆下方的路徑／網址複製按鈕；淡黃色按鈕）。",
+  "version": "0.6.0",
+  "description": "控制台：輸入框上方的 Session／Tool／MCP／流程／記憶 按鈕與側邊面板（未結案／暫時結案／已結案 session 點選切換、工具清單、MCP 伺服器啟用／停用、計畫進度與本 session 即時活動、記憶檔檢視與複製路徑；回覆下方的路徑／網址複製按鈕；淡黃色按鈕）。",
   "author": { "name": "bai" },
   "types": "./types/index.d.ts"
 }
