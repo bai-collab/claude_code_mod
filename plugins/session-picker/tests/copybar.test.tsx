@@ -271,6 +271,24 @@ describe("回覆下方的複製按鈕", () => {
     expect(JSON.stringify(await view.drawn()).includes("abc123def456")).toBe(false);
   });
 
+  test("多行附標題的指令按鈕：標籤是標題；按下去 ui.copy 收到不含標題行的原文，狀態列只有一行（遮罩）", async ($, on) => {
+    const world = worldOf(on);
+    await $.session.start(SESSION_START);
+    const body = ["curl --token abc123def456 https://x.test/run", "npm.cmd test"].join("\n");
+    const text = ["照下面跑：", "```bash", "# 跑測試", "", body, "```", `產物在 ${NOTES}`].join("\n");
+    const view = await mountReply($, text);
+    const key = messageKeyOf(text);
+
+    expect(await buttonTexts(view)).toEqual(["⧉ 跑測試", "⧉ notes.txt"]);
+    await view.press({ key: `copy:${key}:0` });
+
+    expect(world.copies).toEqual([{ text: body, surface: "terminal" }]);
+    const status = (await texts(view)).filter((line) => line.startsWith("✔"));
+    expect(status).toEqual(["✔ 已複製：curl --token *** https://x.test/run…（共 2 行）"]);
+    expect(status[0]?.includes("\n")).toBe(false);
+    expect(JSON.stringify(await view.drawn()).includes("abc123def456")).toBe(false);
+  });
+
   test("複製按鈕是淡黃色色塊（#FFF3B0）配深色字（#3B3000）", async ($, on) => {
     worldOf(on);
     await $.session.start(SESSION_START);
