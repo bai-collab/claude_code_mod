@@ -1,6 +1,6 @@
 import { describe, expect, test } from "claude-code/testing";
 
-import { copyLabelOf, extractCopyTargets, findCopyTargets, messageKeyOf } from "../hooks/copy-model";
+import { copyLabelOf, copyShownOf, extractCopyTargets, findCopyTargets, messageKeyOf } from "../hooks/copy-model";
 import { textWidth } from "../hooks/flow-model";
 
 const FENCE = "```";
@@ -153,6 +153,192 @@ describe("按鈕標籤", () => {
     // 剛好放得下就原樣
     const exact = "e".repeat(28);
     expect(copyLabelOf(`F:\\x\\${exact}`, "path")).toBe(`⧉ ${exact}`);
+  });
+});
+
+// 把幾行包成 ``` 圍欄區塊。
+function fenced(...lines: string[]): string {
+  return [`${FENCE}text`, ...lines, FENCE].join("\n");
+}
+
+function summaryOf(text: string): { kind: string; raw: string; label: string }[] {
+  return extractCopyTargets(text).shown.map(({ kind, raw, label }) => ({ kind, raw, label }));
+}
+
+describe("圍欄裡的指令按鈕", () => {
+  test("單行以 / 開頭：標籤是不含斜線的指令名稱，複製整行原文", () => {
+    expect(summaryOf(fenced("/rename 結案 | x｜y"))).toEqual([
+      { kind: "command", raw: "/rename 結案 | x｜y", label: "⧉ rename" },
+    ]);
+    expect(summaryOf(fenced("/copy 2"))).toEqual([{ kind: "command", raw: "/copy 2", label: "⧉ copy" }]);
+    // 斜線後沒有名稱時退回那個字本身
+    expect(summaryOf(fenced("/"))).toEqual([{ kind: "command", raw: "/", label: "⧉ /" }]);
+  });
+
+  test("其他單行：標籤取前兩個字，含 \\ 或 / 的字只留最後一段", () => {
+    expect(summaryOf(fenced("node harness/cli/review-loop.mjs a.json"))).toEqual([
+      { kind: "command", raw: "node harness/cli/review-loop.mjs a.json", label: "⧉ node review-loop.mjs" },
+    ]);
+    expect(summaryOf(fenced("npm.cmd test"))[0]?.label).toBe("⧉ npm.cmd test");
+    expect(summaryOf(fenced("ls"))[0]?.label).toBe("⧉ ls");
+    expect(summaryOf(fenced("git status -s"))[0]?.label).toBe("⧉ git status");
+    expect(summaryOf(fenced(String.raw`cd F:\work\proj`))[0]?.label).toBe("⧉ cd proj");
+  });
+
+  test("多行且沒有標題：標籤是「指令（N 行）」，複製整段內容（含中間的空白行）", () => {
+    expect(summaryOf(fenced("cd /work", "", "npm.cmd test"))).toEqual([
+      { kind: "command", raw: "cd /work\n\nnpm.cmd test", label: "⧉ 指令（3 行）" },
+    ]);
+  });
+
+  test("# 標題開頭：標題當標籤、其餘（去掉標題後緊接的空白行）當複製內容，先於單行規則判斷", () => {
+    expect(summaryOf(fenced("# 結案指令", "", "", "npm.cmd test", "npm.cmd run lint"))).toEqual([
+      { kind: "command", raw: "npm.cmd test\nnpm.cmd run lint", label: "⧉ 結案指令" },
+    ]);
+    // 其餘只有一行也用標題（不會落到「前兩個字」規則）
+    expect(summaryOf(fenced("# 跑測試", "/copy 2"))).toEqual([{ kind: "command", raw: "/copy 2", label: "⧉ 跑測試" }]);
+  });
+
+  test("只有標題的區塊、空區塊、只有空白行的區塊：沒有按鈕", () => {
+    expect(extractCopyTargets(fenced("# 只有標題"))).toEqual({ shown: [], more: 0 });
+    expect(extractCopyTargets(fenced("# 只有標題", "", ""))).toEqual({ shown: [], more: 0 });
+    expect(extractCopyTargets(fenced())).toEqual({ shown: [], more: 0 });
+    expect(extractCopyTargets(fenced("", "   ", ""))).toEqual({ shown: [], more: 0 });
+  });
+
+  test("CRLF 換行：照樣認得圍欄，複製內容不含 \\r", () => {
+    const text = ["說明", "```bash", "cd /work", "npm.cmd test", "```", ""].join("\r\n");
+
+    expect(summaryOf(text)).toEqual([{ kind: "command", raw: "cd /work\nnpm.cmd test", label: "⧉ 指令（2 行）" }]);
+  });
+
+  test("縮排的圍欄：去掉非空白行共同的最小縮排，其餘縮排保留", () => {
+    const text = ["  ```bash", "    git status", "      -s", "", "    git diff", "  ```"].join("\n");
+
+    expect(summaryOf(text)).toEqual([
+      { kind: "command", raw: "git status\n  -s\n\ngit diff", label: "⧉ 指令（4 行）" },
+    ]);
+  });
+
+  test("沒有結尾的圍欄忽略、維持一般文字：不出指令按鈕，裡面的路徑照舊抓", () => {
+    expect(extractCopyTargets(["```bash", "npm.cmd test"].join("\n"))).toEqual({ shown: [], more: 0 });
+
+    const withPath = ["```text", String.raw`看 F:\work\out.log`].join("\n");
+    expect(summaryOf(withPath)).toEqual([{ kind: "path", raw: String.raw`F:\work\out.log`, label: "⧉ out.log" }]);
+  });
+
+  test("區塊內容剛好是一個路徑或一個網址：不出指令按鈕，仍當一般文字抓成路徑／網址按鈕", () => {
+    expect(summaryOf(fenced(String.raw`F:\work\out.log`))).toEqual([
+      { kind: "path", raw: String.raw`F:\work\out.log`, label: "⧉ out.log" },
+    ]);
+    expect(summaryOf(fenced("https://x.test/a/b.html"))).toEqual([
+      { kind: "url", raw: "https://x.test/a/b.html", label: "⧉ x.test/b.html" },
+    ]);
+  });
+
+  test("指令區塊裡的路徑與網址不另外出按鈕；區塊外的照常", () => {
+    const text = [
+      String.raw`先看 F:\before\a.txt`,
+      fenced(String.raw`cd F:\work && node run.mjs https://x.test/in-block`),
+      String.raw`再看 F:\after\b.txt`,
+    ].join("\n");
+
+    expect(summaryOf(text)).toEqual([
+      { kind: "path", raw: String.raw`F:\before\a.txt`, label: "⧉ a.txt" },
+      { kind: "command", raw: String.raw`cd F:\work && node run.mjs https://x.test/in-block`, label: "⧉ cd work" },
+      { kind: "path", raw: String.raw`F:\after\b.txt`, label: "⧉ b.txt" },
+    ]);
+  });
+
+  test("沒產生按鈕的圍欄區塊結尾不會被當成下一個圍欄的開頭", () => {
+    const text = [fenced(String.raw`F:\a\one.txt`), "中間文字", fenced("npm.cmd test")].join("\n");
+
+    expect(summaryOf(text)).toEqual([
+      { kind: "path", raw: String.raw`F:\a\one.txt`, label: "⧉ one.txt" },
+      { kind: "command", raw: "npm.cmd test", label: "⧉ npm.cmd test" },
+    ]);
+  });
+
+  test("混合順序依第一次出現；同種同原文去重（指令以整段原文比對）", () => {
+    const text = [
+      String.raw`改了 F:\a\x.txt`,
+      fenced("npm.cmd test"),
+      "開 https://x.test/p",
+      fenced("npm.cmd test"),
+      String.raw`又是 F:\a\x.txt 與 https://x.test/p`,
+      fenced("npm.cmd  test"),
+    ].join("\n");
+
+    expect(summaryOf(text).map((target) => `${target.kind}:${target.raw}`)).toEqual([
+      String.raw`path:F:\a\x.txt`,
+      "command:npm.cmd test",
+      "url:https://x.test/p",
+      "command:npm.cmd  test",
+    ]);
+  });
+
+  test("8 顆上限橫跨三種按鈕：依出現順序取前 8，超出的回報 more", () => {
+    const text = [
+      ...Array.from({ length: 4 }, (_, index) => String.raw`F:\dir\file${index}.txt`),
+      fenced("npm.cmd run a"),
+      "https://x.test/u1 https://x.test/u2",
+      fenced("npm.cmd run b"),
+      fenced("npm.cmd run c"),
+      fenced("npm.cmd run d"),
+    ].join("\n");
+
+    const { shown, more } = extractCopyTargets(text);
+
+    expect(shown.map((target) => target.kind)).toEqual([
+      "path",
+      "path",
+      "path",
+      "path",
+      "command",
+      "url",
+      "url",
+      "command",
+    ]);
+    expect(shown[7]?.raw).toBe("npm.cmd run b");
+    expect(more).toBe(2);
+    expect(extractCopyTargets(text, 3).more).toBe(7);
+  });
+
+  test("標籤遮罩秘密、複製的 raw 一字不改（含標題行以外的秘密）", () => {
+    const secret = "abc123def456";
+    const [target] = extractCopyTargets(fenced(`# 設定 token=${secret}`, `curl --token ${secret} https://x.test`)).shown;
+
+    expect(target?.kind).toBe("command");
+    expect(target?.raw).toBe(`curl --token ${secret} https://x.test`);
+    expect(target?.label).toBe("⧉ 設定 token=***");
+    expect(target?.label.includes(secret)).toBe(false);
+
+    const single = extractCopyTargets(fenced(`export API_KEY=${secret}`)).shown[0];
+    expect(single?.raw).toBe(`export API_KEY=${secret}`);
+    expect(single?.label.includes(secret)).toBe(false);
+  });
+
+  test("標籤超過 28 欄時截斷並加省略號", () => {
+    const label = extractCopyTargets(fenced("# " + "很長的標題".repeat(10), "npm.cmd test")).shown[0]?.label ?? "";
+
+    expect(label.startsWith("⧉ ")).toBe(true);
+    expect(label.endsWith("…")).toBe(true);
+    expect(textWidth(label.slice(2))).toBeLessThanOrEqual(28);
+  });
+});
+
+describe("狀態列顯示文字", () => {
+  test("單行：去控制字元並遮罩", () => {
+    expect(copyShownOf(String.raw`F:\a\b.txt`)).toBe(String.raw`F:\a\b.txt`);
+    expect(copyShownOf("https://x.test/cb?token=abc123def456")).toBe("https://x.test/cb?token=***");
+  });
+
+  test("多行：遮罩後的第一個非空行加「…（共 N 行）」，只有一行", () => {
+    const shown = copyShownOf("\ncurl --token abc123def456 https://x.test\nnpm.cmd test\n");
+
+    expect(shown).toBe("curl --token *** https://x.test…（共 4 行）");
+    expect(shown.includes("\n")).toBe(false);
+    expect(shown.includes("abc123def456")).toBe(false);
   });
 });
 

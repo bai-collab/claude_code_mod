@@ -1,7 +1,7 @@
 import { atom, read, update } from "claude-code";
 import type { ElementTable, EngineInterface, Register, RenderSurface, ToolCallResult, UiPressArgument } from "claude-code";
 
-import { extractCopyTargets, messageKeyOf } from "./copy-model";
+import { copyShownOf, extractCopyTargets, messageKeyOf } from "./copy-model";
 import {
   activityLines,
   addEvent,
@@ -463,9 +463,10 @@ async function copyMemoryPath($: EngineInterface, path: string, surface: RenderS
 
 // ---------- 回覆下方的複製按鈕（S5）----------
 
-// 複製原文（一字不改）；狀態只顯示在該則訊息下面，顯示用的文字去掉控制字元並遮罩疑似祕密（複製的仍是原文）。
+// 複製原文（一字不改）；狀態只顯示在該則訊息下面，顯示用的文字去掉控制字元並遮罩疑似祕密（複製的仍是原文）；
+// 多行指令只顯示第一行加「…（共 N 行）」，狀態列保持單行。
 async function copyReplyTarget($: EngineInterface, msgKey: string, raw: string, surface: RenderSurface): Promise<void> {
-  const shown = maskSecrets(singleLine(raw));
+  const shown = copyShownOf(raw);
   let text: string;
   let isError = false;
   try {
