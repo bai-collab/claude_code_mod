@@ -9,6 +9,12 @@ A collection of plugins (mods) that extend the local Claude Code harness.
 | [`prompt-optimizer`](plugins/prompt-optimizer) | Attaches a hidden "clarify or proceed" instruction to short or vague prompts: if a key decision is missing, Claude asks at most 3 questions first; otherwise it proceeds and states its assumptions on the first line of the reply |
 | [`session-picker`](plugins/session-picker) | Control panel (Traditional Chinese UI): a button band above the prompt and a docked pane with **Session** (10 most recent unfinished sessions, click to `/resume`), **Tool**, **MCP** (enable/disable), **流程** (plan progress + live tool/agent/MCP activity, secrets masked) and **記憶** (loaded memory files: view or copy path) tabs, plus copy buttons for paths/URLs under each reply |
 
+## Launchers
+
+| Launcher | Purpose |
+| --- | --- |
+| [`start-claude`](launchers/start-claude) | Windows double-click launcher: choose billing before Claude Code starts — `1` subscription (OAuth; clears the API key for that window only and requires `authMethod` `claude.ai`) or `2` API key (`--bare`, re-loads `CLAUDE.md` with `--add-dir`). Set the user environment variable `CLAUDE_WORKDIR` to your work folder. Details (Traditional Chinese): [`launchers/start-claude/README.md`](launchers/start-claude/README.md) |
+
 ## Installation
 
 These plugins use Claude Code's **function hooks** (`hooks/register.ts`), which is an early access API.
