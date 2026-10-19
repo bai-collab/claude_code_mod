@@ -40,7 +40,8 @@ const TITLE_COLUMNS = 40;
 const BAND_LABEL_COLUMNS = 28;
 const PLAN_DIR = "planned";
 const KEPT_PLANS = 5;
-const PREFIX_PATTERN = /^\s*進行中\s*[|｜]\s*/;
+// 狀態前綴（進行中、待驗收、暫結案、暫時結案、結案），顯示標題時去掉；長的「暫時結案」「暫結案」要排在「結案」前面。
+const PREFIX_PATTERN = /^\s*(?:進行中|待驗收|暫時結案|暫結案|結案)\s*[|｜]\s*/;
 const UNSAFE_SERVER_NAME = /[\s\p{Cc}]/u;
 const CLAUDE_CONFIG_FILE = ".claude.json";
 const MEMORY_DIR_LIMIT = 30;
@@ -104,8 +105,18 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "memory", label: "記憶" },
 ];
 
+type SessionGroup = "open" | "paused" | "closed";
+type SessionEntry = { id: string; title: string; mtimeMs: number };
+
+// Session 分頁的三個子分頁：未結案／暫時結案／已結案（腳本一次回傳三組，切換子分頁不重跑腳本）。
+const SESSION_GROUPS: { id: SessionGroup; label: string; header: (count: number) => string; empty: string }[] = [
+  { id: "open", label: "未結案", header: (count) => `最近 ${count} 個未結案 session`, empty: "沒有未結案的 session" },
+  { id: "paused", label: "暫時結案", header: (count) => `最近 ${count} 個暫時結案 session`, empty: "沒有暫時結案的 session" },
+  { id: "closed", label: "已結案", header: (count) => `最近 ${count} 個已結案 session`, empty: "沒有已結案的 session" },
+];
+
 type Picker = {
-  sessions: { id: string; title: string; mtimeMs: number }[];
+  groups: Record<SessionGroup, SessionEntry[]>;
   error: string;
   actionError: string;
   loadedAt: number;
@@ -125,8 +136,10 @@ type McpState = {
 
 const pickerAtom = atom(
   { plugin: "session-picker", key: "picker" } as const,
-  { sessions: [], error: "", actionError: "", loadedAt: 0 },
+  { groups: emptyGroups(), error: "", actionError: "", loadedAt: 0 } as Picker,
 );
+// 目前選的 Session 子分頁；獨立成 atom，重新整理（整個 picker 被換掉）時不會跳回「未結案」。
+const sessionGroupAtom = atom({ plugin: "session-picker", key: "sessionGroup" } as const, "open" as SessionGroup);
 const tabAtom = atom({ plugin: "session-picker", key: "tab" } as const, "session" as Tab);
 const toolsAtom = atom(
   { plugin: "session-picker", key: "tools" } as const,
@@ -192,6 +205,10 @@ const memoryAtom = atom(
   } as MemoryState,
 );
 
+function emptyGroups(): Picker["groups"] {
+  return { open: [], paused: [], closed: [] };
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -200,7 +217,7 @@ function messageOf(error: unknown): string {
 
 // 讀取清單：唯一的外部呼叫是 node 腳本（argv、無 shell）；失敗都存成錯誤字串，不丟出。
 async function loadList($: EngineInterface): Promise<void> {
-  const next: Picker = { sessions: [], error: "", actionError: "", loadedAt: 0 };
+  const next: Picker = { groups: emptyGroups(), error: "", actionError: "", loadedAt: 0 };
   try {
     const [root, id, now] = await Promise.all([$.session.root(), $.session.id(), $.clock.now()]);
     next.loadedAt = now;
@@ -224,10 +241,12 @@ async function loadList($: EngineInterface): Promise<void> {
       const parsed = JSON.parse(result.stdout) as {
         ok?: boolean;
         error?: string;
-        sessions?: Picker["sessions"];
+        groups?: Partial<Record<SessionGroup, SessionEntry[]>>;
       };
-      if (parsed.ok === true && Array.isArray(parsed.sessions)) next.sessions = parsed.sessions;
-      else next.error = `讀取 session 清單失敗：${parsed.error ?? "回應格式不符"}`;
+      const groups = parsed.groups;
+      if (parsed.ok === true && groups !== undefined && SESSION_GROUPS.every((entry) => Array.isArray(groups[entry.id]))) {
+        next.groups = { open: groups.open ?? [], paused: groups.paused ?? [], closed: groups.closed ?? [] };
+      } else next.error = `讀取 session 清單失敗：${parsed.error ?? "回應格式不符"}`;
     }
   } catch (error) {
     next.error = `讀取 session 清單失敗：${messageOf(error)}`;
@@ -613,7 +632,7 @@ function relativeTime(mtimeMs: number, now: number): string {
   return `${Math.floor(hours / 24)} 天前`;
 }
 
-function labelOf(session: Picker["sessions"][number], now: number): string {
+function labelOf(session: SessionEntry, now: number): string {
   const title = session.title.replace(PREFIX_PATTERN, "").replace(/\s+/g, " ").trim() || "（無標題）";
   return `${truncate(title, TITLE_COLUMNS)} · ${relativeTime(session.mtimeMs, now)}`;
 }
@@ -625,7 +644,7 @@ function toolLine(tool: ToolRow, columns: number): string {
 
 export const register: Register = (on) => {
   on("session.start", { isInteractive: true }, async ($, e, next) => {
-    await $.command.register({ name: SESSIONS_COMMAND, description: "開啟控制台（Session 分頁：未結案 session）" });
+    await $.command.register({ name: SESSIONS_COMMAND, description: "開啟控制台（Session 分頁：未結案／暫時結案／已結案 session）" });
     await $.command.register({
       name: PANEL_COMMAND,
       description: "開啟控制台；/panel auto on|off 設定自動開啟；/panel copybar on|off 設定回覆下方的複製按鈕",
@@ -727,6 +746,8 @@ export const register: Register = (on) => {
   });
 
   on("command.run", { command: SESSIONS_COMMAND }, async ($) => {
+    // /sessions 一律落在「未結案」子分頁。
+    await update($, sessionGroupAtom, () => "open");
     await openPanel($, "session", true);
     return {};
   }).catch(($, e, next) => {
@@ -847,9 +868,10 @@ export const register: Register = (on) => {
   });
 
   on("ui.render", { component: "Pane", requestId: PANE_ID }, async ($, e) => {
-    const [tab, picker, tools, mcp, memory, now] = await Promise.all([
+    const [tab, picker, sessionGroup, tools, mcp, memory, now] = await Promise.all([
       read($, tabAtom),
       read($, pickerAtom),
+      read($, sessionGroupAtom),
       read($, toolsAtom),
       read($, mcpAtom),
       read($, memoryAtom),
@@ -880,12 +902,32 @@ export const register: Register = (on) => {
 
     let body;
     if (tab === "session") {
+      const group = SESSION_GROUPS.find((entry) => entry.id === sessionGroup) ?? SESSION_GROUPS[0]!;
+      const sessions = picker.groups[group.id];
+      const groupBar = (
+        <Box key="groups" flexDirection="row" flexWrap="wrap" columnGap={1}>
+          {SESSION_GROUPS.map((entry) => {
+            const isActive = entry.id === group.id;
+            const text = `${entry.label}(${picker.groups[entry.id].length})`;
+            return chip({
+              boxKey: `group-chip-${entry.id}`,
+              key: `group-${entry.id}`,
+              label: isActive ? `[${text}]` : text,
+              plain: true,
+              active: isActive,
+              padded: true,
+              onPress: () => void update($, sessionGroupAtom, () => entry.id),
+            });
+          })}
+        </Box>
+      );
       body = (
         <Box key="session" flexDirection="column">
-          <Text>最近 {picker.sessions.length} 個未結案 session</Text>
+          {groupBar}
+          <Text>{group.header(sessions.length)}</Text>
           {picker.error ? <Text color="error">{picker.error}</Text> : null}
-          {!picker.error && picker.sessions.length === 0 ? <Text dimColor>沒有未結案的 session</Text> : null}
-          {picker.sessions.map((session) =>
+          {!picker.error && sessions.length === 0 ? <Text dimColor>{group.empty}</Text> : null}
+          {sessions.map((session) =>
             chip({
               boxKey: `chip-${session.id}`,
               key: session.id,

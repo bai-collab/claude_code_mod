@@ -1,11 +1,21 @@
-// 唯讀：列出某工作目錄下最近的「進行中」session（依 transcript 最後一筆 custom-title 判定）。
+// 唯讀：列出某工作目錄下最近的 session，依 transcript 最後一筆 custom-title 的狀態前綴分成三組：
+// open（進行中、待驗收）、paused（暫結案、暫時結案）、closed（結案）；每組各取最近 --limit 個。
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 
 const ID_PATTERN = /^[0-9a-f-]{36}$/i;
-const UNFINISHED_PATTERN = /^\s*進行中\s*[|｜]/;
+// 前綴＝第一個 | 或 ｜ 之前的文字（去頭尾空白）；必須整段完全相等，所以「暫結案 | x」不會被當成「結案」。
+const STATUS_GROUPS = {
+  進行中: "open",
+  待驗收: "open",
+  暫結案: "paused",
+  暫時結案: "paused",
+  結案: "closed",
+};
+const GROUP_NAMES = ["open", "paused", "closed"];
+const PREFIX_PATTERN = /^\s*([^|｜]*?)\s*[|｜]/;
 const TITLE_MARKER = Buffer.from('"type":"custom-title"');
 
 function parseArgs(argv) {
@@ -61,13 +71,20 @@ function lastCustomTitle(path) {
   return undefined;
 }
 
+function groupOf(title) {
+  const match = PREFIX_PATTERN.exec(title);
+  if (!match) return undefined;
+  const prefix = match[1];
+  return Object.hasOwn(STATUS_GROUPS, prefix) ? STATUS_GROUPS[prefix] : undefined;
+}
+
 function listSessions(options) {
   const dir = transcriptDir(options);
   let names;
   try {
     names = readdirSync(dir);
   } catch (error) {
-    if (error && error.code === "ENOENT") return { dir, sessions: [] };
+    if (error && error.code === "ENOENT") return { dir, groups: { open: [], paused: [], closed: [] } };
     throw error;
   }
 
@@ -84,20 +101,23 @@ function listSessions(options) {
   }
   files.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
-  const sessions = [];
+  // 掃一次：由新到舊，三組都滿了就提前停止。
+  const groups = { open: [], paused: [], closed: [] };
   for (const file of files) {
-    if (sessions.length >= options.limit) break;
+    if (GROUP_NAMES.every((name) => groups[name].length >= options.limit)) break;
     let title;
     try {
       title = lastCustomTitle(file.path);
     } catch {
       continue;
     }
-    if (title !== undefined && UNFINISHED_PATTERN.test(title)) {
-      sessions.push({ id: file.id, title, mtimeMs: file.mtimeMs });
+    if (title === undefined) continue;
+    const group = groupOf(title);
+    if (group !== undefined && groups[group].length < options.limit) {
+      groups[group].push({ id: file.id, title, mtimeMs: file.mtimeMs });
     }
   }
-  return { dir, sessions };
+  return { dir, groups };
 }
 
 try {

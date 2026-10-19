@@ -2,11 +2,16 @@ declare module "claude-code" {
   interface PluginState {
     "session-picker": {
       picker: {
-        sessions: { id: string; title: string; mtimeMs: number }[];
+        groups: {
+          open: { id: string; title: string; mtimeMs: number }[];
+          paused: { id: string; title: string; mtimeMs: number }[];
+          closed: { id: string; title: string; mtimeMs: number }[];
+        };
         error: string;
         actionError: string;
         loadedAt: number;
       };
+      sessionGroup: "open" | "paused" | "closed";
       tab: "session" | "tool" | "mcp" | "flow" | "memory";
       tools: {
         tools: { name: string; description: string; mcp: boolean }[];

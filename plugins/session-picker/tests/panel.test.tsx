@@ -83,7 +83,7 @@ function worldOf(on: On, options: { autoOpen?: boolean } = {}): World {
   on("session.cwd", () => ({ value: "/work" }));
   on("session.id", () => ({ value: "current-session-id" }));
   on("process.run", () =>
-    ({ value: { stdout: JSON.stringify({ ok: true, dir: "/t", sessions: [] }), stderr: "", exitCode: 0 } }) as never,
+    ({ value: { stdout: JSON.stringify({ ok: true, dir: "/t", groups: { open: [], paused: [], closed: [] } }), stderr: "", exitCode: 0 } }) as never,
   );
   on("tool.list", () => ({ value: world.tools }));
   // 下層外掛的 band 內容：我們的 band 必須疊在它上面而不是蓋掉它。
@@ -342,7 +342,17 @@ describe("分頁切換", () => {
     await $.session.start(SESSION_START);
     const pane = await openedPane($, world, "sessions");
 
-    expect(await keys(pane)).toEqual(["tab-session", "tab-tool", "tab-mcp", "tab-flow", "tab-memory", "refresh"]);
+    expect(await keys(pane)).toEqual([
+      "tab-session",
+      "tab-tool",
+      "tab-mcp",
+      "tab-flow",
+      "tab-memory",
+      "group-open",
+      "group-paused",
+      "group-closed",
+      "refresh",
+    ]);
     expect((await pane.findAll({ type: "Button", key: "tab-session" }))[0]?.text).toBe("[Session]");
 
     await pane.press({ key: "tab-tool" });
