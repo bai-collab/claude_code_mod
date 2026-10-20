@@ -12,7 +12,24 @@ declare module "claude-code" {
         loadedAt: number;
       };
       sessionGroup: "open" | "paused" | "closed";
-      tab: "session" | "tool" | "mcp" | "flow" | "memory";
+      tab: "session" | "tool" | "mcp" | "flow" | "memory" | "quota";
+      quota: {
+        samples: {
+          source: "claude" | "codex";
+          window: "five_hour" | "seven_day";
+          pct: number;
+          resetsAt: number;
+          at: number;
+        }[];
+        codexAt: number;
+        codexReason: string;
+        agy: { today: number; week: number } | null;
+        agyReason: string;
+        claudeEmpty: boolean;
+        historyError: string;
+        scriptError: string;
+        lastWriteAt: number;
+      };
       tools: {
         tools: { name: string; description: string; mcp: boolean }[];
         error: string;

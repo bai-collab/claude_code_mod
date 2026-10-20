@@ -28,6 +28,21 @@ import {
   truncate,
 } from "./flow-model";
 import type { ActivityState, PlanNode } from "./flow-model";
+import {
+  addSample,
+  agoLabel,
+  claudeSamples,
+  codexSamples,
+  currentCycle,
+  forecastOf,
+  mergeHistory,
+  parseHistory,
+  parseScriptOutput,
+  quotaBarLine,
+  serializeHistory,
+  trimHistory,
+} from "./quota-model";
+import type { AgyCounts, QuotaSource, QuotaWindow, Sample } from "./quota-model";
 
 const SESSIONS_COMMAND = "sessions";
 const PANEL_COMMAND = "panel";
@@ -53,6 +68,15 @@ const COPY_BAR_KEY = "copyBar";
 const CHIP_BG = "#FFF3B0";
 const CHIP_FG = "#3B3000";
 const CHIP_ACTIVE_BG = "#F2C94C";
+// 額度分頁：歷史檔放在 Claude 設定資料夾底下；兩次寫檔至少隔 2 分鐘；讀取腳本 10 秒逾時。
+const QUOTA_HISTORY_FILE = "plugin-data/session-picker/quota-history.json";
+const QUOTA_WRITE_GAP_MS = 120_000;
+const QUOTA_SCRIPT_TIMEOUT_MS = 10_000;
+const WRITE_ERROR_PREFIX = "寫入歷史檔失敗：";
+const QUOTA_WINDOWS: [QuotaWindow, string][] = [
+  ["seven_day", "週用量"],
+  ["five_hour", "5 小時"],
+];
 
 type ChipUi = Pick<ElementTable, "Box" | "Button" | "Text">;
 type ChipOptions = {
@@ -95,7 +119,7 @@ function chipButton(ui: ChipUi, options: ChipOptions) {
   );
 }
 
-type Tab = "session" | "tool" | "mcp" | "flow" | "memory";
+type Tab = "session" | "tool" | "mcp" | "flow" | "memory" | "quota";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "session", label: "Session" },
@@ -103,6 +127,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "mcp", label: "MCP" },
   { id: "flow", label: "流程" },
   { id: "memory", label: "記憶" },
+  { id: "quota", label: "額度" },
 ];
 
 type SessionGroup = "open" | "paused" | "closed";
@@ -203,6 +228,36 @@ const memoryAtom = atom(
     status: "",
     statusIsError: false,
   } as MemoryState,
+);
+
+type QuotaState = {
+  // 記憶體裡的讀數（含從歷史檔合併進來的），只有 Sample 的五個欄位。
+  samples: Sample[];
+  // Codex 最後一筆讀數的紀錄檔修改時間（0＝沒有）。
+  codexAt: number;
+  codexReason: string;
+  agy: AgyCounts | null;
+  agyReason: string;
+  // Claude 回報的額度視窗是空的（不是訂閱方案或還沒有第一筆讀數）。
+  claudeEmpty: boolean;
+  historyError: string;
+  scriptError: string;
+  lastWriteAt: number;
+};
+
+const quotaAtom = atom(
+  { plugin: "session-picker", key: "quota" } as const,
+  {
+    samples: [],
+    codexAt: 0,
+    codexReason: "",
+    agy: null,
+    agyReason: "",
+    claudeEmpty: false,
+    historyError: "",
+    scriptError: "",
+    lastWriteAt: 0,
+  } as QuotaState,
 );
 
 function emptyGroups(): Picker["groups"] {
@@ -577,6 +632,155 @@ async function refreshFlowIfOpen($: EngineInterface): Promise<void> {
   }
 }
 
+// ---------- 額度分頁（Claude／Codex 預測、AGY 使用次數）----------
+
+// 歷史檔路徑：CLAUDE_CONFIG_DIR，否則 HOME（或 USERPROFILE）/.claude；都沒有就不存歷史。
+async function quotaHistoryPathOf($: EngineInterface): Promise<string | undefined> {
+  const configDir = await $.env.get("CLAUDE_CONFIG_DIR");
+  if (configDir) return `${normalizePath(configDir)}/${QUOTA_HISTORY_FILE}`;
+  const home = (await $.env.get("HOME")) ?? (await $.env.get("USERPROFILE"));
+  return home ? `${normalizePath(home)}/.claude/${QUOTA_HISTORY_FILE}` : undefined;
+}
+
+// 讀歷史檔：檔案不存在回傳 []；格式不符回傳 undefined（改用記憶體樣本重建）。讀檔錯誤往外丟。
+async function readQuotaHistory($: EngineInterface, path: string): Promise<Sample[] | undefined> {
+  if (!(await $.fs.exists(path))) return [];
+  return parseHistory(await $.fs.read(path));
+}
+
+// 把歷史檔合併進記憶體（分頁打開、重新整理時；其他 session 寫進去的讀數也會一起顯示）。
+async function mergeQuotaHistory($: EngineInterface, now: number): Promise<void> {
+  let historyError = "";
+  let fileSamples: Sample[] = [];
+  try {
+    const path = await quotaHistoryPathOf($);
+    if (path !== undefined) {
+      const parsed = await readQuotaHistory($, path);
+      if (parsed === undefined) historyError = "歷史檔格式不符，改用本次記錄重建";
+      else fileSamples = parsed;
+    }
+  } catch (error) {
+    historyError = `讀取歷史檔失敗：${singleLine(messageOf(error))}`;
+  }
+  await update($, quotaAtom, (state) => ({
+    ...state,
+    samples: trimHistory(mergeHistory(fileSamples, state.samples), now),
+    historyError,
+  }));
+}
+
+// 寫歷史檔：寫前先讀檔再合併（多個 session 同時開著也不會互相蓋掉）；距上次寫入不到 2 分鐘就先不寫。
+async function persistQuota($: EngineInterface, now: number): Promise<void> {
+  const state = await read($, quotaAtom);
+  if (state.samples.length === 0 || now - state.lastWriteAt < QUOTA_WRITE_GAP_MS) return;
+  let writeError = "";
+  let merged = state.samples;
+  try {
+    const path = await quotaHistoryPathOf($);
+    if (path === undefined) return;
+    // 格式不符的舊檔當成空的，由這次的記錄重建。
+    const fileSamples = (await readQuotaHistory($, path)) ?? [];
+    merged = trimHistory(mergeHistory(fileSamples, state.samples), now);
+    await $.fs.write(path, serializeHistory(merged));
+  } catch (error) {
+    writeError = `${WRITE_ERROR_PREFIX}${singleLine(messageOf(error))}`;
+  }
+  await update($, quotaAtom, (current) => ({
+    ...current,
+    samples: trimHistory(mergeHistory(merged, current.samples), now),
+    // 寫成功只清掉上次的寫入錯誤，讀取時的說明（例如已重建）留著。
+    historyError: writeError || (current.historyError.startsWith(WRITE_ERROR_PREFIX) ? "" : current.historyError),
+    lastWriteAt: now,
+  }));
+}
+
+async function recordQuota($: EngineInterface, fresh: Sample[], now: number): Promise<void> {
+  if (fresh.length === 0) return;
+  await update($, quotaAtom, (state) => ({
+    ...state,
+    samples: fresh.reduce((history, sample) => addSample(history, sample, now), state.samples),
+  }));
+  await persistQuota($, now);
+}
+
+// 每輪（主迴圈）記一筆 Claude 讀數；不必開著分頁，否則沒有歷史可算速度。整段失敗都吞掉，不影響 turn。
+async function sampleClaudeQuota($: EngineInterface): Promise<void> {
+  try {
+    const { rateLimits } = await $.session.usage();
+    const now = await $.clock.now();
+    const fresh = claudeSamples(rateLimits, now);
+    const claudeEmpty = fresh.length === 0;
+    if ((await read($, quotaAtom)).claudeEmpty !== claudeEmpty) {
+      await update($, quotaAtom, (state) => ({ ...state, claudeEmpty }));
+    }
+    await recordQuota($, fresh, now);
+  } catch {
+    // 取樣是附帶功能，失敗就算了
+  }
+}
+
+// 讀 Codex 與 AGY：唯一的外部呼叫是 node 腳本（argv、無 shell）；失敗都存成錯誤字串，不丟出。
+async function loadQuota($: EngineInterface): Promise<void> {
+  let now = 0;
+  try {
+    now = await $.clock.now();
+    await mergeQuotaHistory($, now);
+    const result = await $.process.run(["node", `${$.plugin.root}/scripts/read-quota.mjs`], {
+      timeoutMs: QUOTA_SCRIPT_TIMEOUT_MS,
+    });
+    const firstLine = (result.stderr.trim().split("\n")[0] ?? "").trim();
+    const parsed = result.exitCode === 0 ? parseScriptOutput(result.stdout) : undefined;
+    if (parsed === undefined) {
+      const why = result.exitCode !== 0 ? `結束碼 ${result.exitCode}` : "回應格式不符";
+      await update($, quotaAtom, (state) => ({
+        ...state,
+        scriptError: `讀取 Codex／AGY 失敗（${why}）${firstLine ? `：${singleLine(firstLine)}` : ""}`,
+      }));
+      return;
+    }
+    await update($, quotaAtom, (state) => ({
+      ...state,
+      codexAt: parsed.codex?.observedAt ?? state.codexAt,
+      codexReason: parsed.codexReason ?? "",
+      agy: parsed.agy,
+      agyReason: parsed.agyReason ?? "",
+      scriptError: "",
+    }));
+    if (parsed.codex !== null) await recordQuota($, codexSamples(parsed.codex), now);
+  } catch (error) {
+    await update($, quotaAtom, (state) => ({
+      ...state,
+      scriptError: `讀取 Codex／AGY 失敗：${singleLine(messageOf(error))}`,
+    }));
+  }
+}
+
+// 本輪面板若開在額度分頁就重讀 Codex／AGY。
+async function refreshQuotaIfOpen($: EngineInterface): Promise<void> {
+  try {
+    if ((await read($, tabAtom)) !== "quota") return;
+    if (!(await $.ui.panes()).some((pane) => pane.id === PANE_ID)) return;
+    await loadQuota($);
+  } catch {
+    // 重讀失敗不影響 turn
+  }
+}
+
+// 一個來源的兩個視窗（週用量在前），每個視窗一行進度條；沒有讀數的視窗不列。
+function quotaRows(
+  samples: Sample[],
+  source: QuotaSource,
+  now: number,
+  columns: number,
+): ReturnType<typeof quotaBarLine>[] {
+  const rows: ReturnType<typeof quotaBarLine>[] = [];
+  for (const [window, label] of QUOTA_WINDOWS) {
+    const forecast = forecastOf(currentCycle(samples, source, window), now);
+    if (forecast !== undefined) rows.push(quotaBarLine(label, forecast, columns));
+  }
+  return rows;
+}
+
 // ---------- 面板開啟、分頁切換 ----------
 
 async function loadTab($: EngineInterface, tab: Tab): Promise<void> {
@@ -584,6 +788,7 @@ async function loadTab($: EngineInterface, tab: Tab): Promise<void> {
   else if (tab === "tool") await loadTools($);
   else if (tab === "mcp") await loadMcp($);
   else if (tab === "memory") await loadMemory($);
+  else if (tab === "quota") await loadQuota($);
   else await loadPlan($);
 }
 
@@ -670,7 +875,11 @@ export const register: Register = (on) => {
   });
 
   on("turn.complete", async ($, e, next) => {
-    if (e.agentId === undefined) await refreshFlowIfOpen($);
+    if (e.agentId === undefined) {
+      await sampleClaudeQuota($);
+      await refreshFlowIfOpen($);
+      await refreshQuotaIfOpen($);
+    }
     return next(e);
   });
 
@@ -883,7 +1092,7 @@ export const register: Register = (on) => {
     const columns = Math.max(e.props.bodyColumns, 12);
 
     const tabBar = (
-      <Box key="tabs" flexDirection="row" columnGap={1}>
+      <Box key="tabs" flexDirection="row" flexWrap="wrap" columnGap={1}>
         {TABS.map((entry) => {
           const isActive = entry.id === tab;
           const label = isActive ? `[${entry.label}]` : entry.label;
@@ -1110,6 +1319,52 @@ export const register: Register = (on) => {
             label: "重新整理",
             hotkey: "r",
             onPress: () => void loadPlan($),
+          })}
+        </Box>
+      );
+    } else if (tab === "quota") {
+      const quota = await read($, quotaAtom);
+      const claudeRows = quotaRows(quota.samples, "claude", now, columns);
+      const codexRows = quotaRows(quota.samples, "codex", now, columns);
+      const rowsOf = (prefix: string, rows: ReturnType<typeof quotaRows>) =>
+        rows.map((row, index) => (
+          <Text key={`${prefix}-${index}`} color={row.level} wrap="truncate-end">
+            {row.text}
+          </Text>
+        ));
+      body = (
+        <Box key="quota" flexDirection="column">
+          <Text bold>額度預測</Text>
+          <Text bold>Claude</Text>
+          {claudeRows.length === 0 ? (
+            <Text dimColor>{quota.claudeEmpty ? "  此帳號沒有額度視窗" : "  還沒有讀數（Claude 要回覆過一次才有）"}</Text>
+          ) : null}
+          {rowsOf("quota-claude", claudeRows)}
+          <Text bold wrap="truncate-end">
+            {quota.codexAt > 0 ? `Codex　最後更新 ${agoLabel(quota.codexAt, now)}` : "Codex"}
+          </Text>
+          {codexRows.length === 0 ? (
+            <Text dimColor wrap="truncate-end">
+              {quota.codexReason ? `  讀不到：${singleLine(quota.codexReason)}` : "  還沒有讀數"}
+            </Text>
+          ) : null}
+          {rowsOf("quota-codex", codexRows)}
+          <Text bold>AGY　無額度與 token 資料</Text>
+          <Text wrap="truncate-end">
+            {quota.agy !== null
+              ? `  使用次數：今天 ${quota.agy.today}｜近 7 天 ${quota.agy.week}（依本機對話資料夾）`
+              : quota.agyReason
+                ? `  讀不到：${singleLine(quota.agyReason)}`
+                : "  還沒有讀數"}
+          </Text>
+          {quota.scriptError ? <Text color="error">{quota.scriptError}</Text> : null}
+          {quota.historyError ? <Text dimColor>{quota.historyError}</Text> : null}
+          {chip({
+            boxKey: "chip-quota-refresh",
+            key: "quota-refresh",
+            label: "重新整理",
+            hotkey: "r",
+            onPress: () => void loadQuota($),
           })}
         </Box>
       );

@@ -1,12 +1,13 @@
-# 控制台（未結案 session 點選清單＋工具＋MCP＋流程＋記憶）
+# 控制台（未結案 session 點選清單＋工具＋MCP＋流程＋記憶＋額度）
 
-在 Claude Code 輸入框上方放一列按鈕，點開側邊面板「控制台」，有五個分頁（版本 0.6.0）；另外每則助理回覆下方會列出路徑與網址的複製按鈕（S5）：
+在 Claude Code 輸入框上方放一列按鈕，點開側邊面板「控制台」，有六個分頁（版本 0.7.0）；另外每則助理回覆下方會列出路徑與網址的複製按鈕（S5）：
 
 - Session：本工作區的 session 分成「未結案／暫時結案／已結案」三個子分頁，各列最近 10 個，點一下就原地切換過去（S1，之後加上子分頁）。
 - Tool：目前可用的工具清單（唯讀）。
 - MCP：MCP 伺服器與狀態，每台一個「停用」或「啟用」按鈕。
 - 流程：上半是 `planned/` 最近一份計畫書的節點進度，下半是本 session 即時的工具與 subagent 活動（S3；S4 起工具目標會先遮罩秘密）。
 - 記憶：本 session 已載入的記憶檔，加上自動記憶資料夾裡未載入的記憶檔；可在面板內看原文、複製絕對路徑（S4）。
+- 額度：Claude 與 Codex 的 5 小時、週用量百分比，照目前速度推算何時到 95%／100%、會不會比重置先到；AGY 只有使用次數（S6）。
 
 ## 使用者決定（2026-10-18）
 
@@ -19,7 +20,7 @@
 
 | 入口 | 作用 |
 |---|---|
-| 輸入框上方的 `Session`、`Tool`、`MCP`、`流程`、`記憶` 按鈕 | 開啟（或切到）控制台並顯示該分頁 |
+| 輸入框上方的 `Session`、`Tool`、`MCP`、`流程`、`記憶`、`額度` 按鈕 | 開啟（或切到）控制台並顯示該分頁 |
 | `/panel` | 開啟控制台，顯示上一次的分頁 |
 | `/panel auto on`、`/panel auto off` | 設定「開新對話、`/clear`、resume、fork 時自動開面板」，預設開；設定存在外掛的 `$.store`（key `autoOpen`），指令會回覆確認 |
 | `/panel copybar on`、`/panel copybar off` | 設定「助理回覆下方的複製按鈕」是否顯示，預設開；設定存在 `$.store`（key `copyBar`），啟動與 `/clear`、resume、fork 時讀進外掛狀態，指令會回覆確認 |
@@ -105,6 +106,40 @@
 - 剪貼簿由終端機的剪貼簿工具或 OSC 52 寫入；OSC 52 不會回報成功與否，有些終端機會丟掉它卻仍顯示「已複製」，貼不出來時請直接選取畫面上的路徑。
 - 這個分頁絕不寫檔、不執行任何程序。
 
+### 額度分頁（S6）
+
+分頁列與按鈕列各多一個「額度」（key `tab-quota`／`band-quota`，無快捷鍵）。三個區塊：
+
+```text
+額度預測
+Claude
+  週用量 █████████░░░░│░ 62% ⚠15時後95%
+  5 小時 ██░░░░░░░░░░░│░ 18% 資料不足
+Codex　最後更新 12 分鐘前
+  週用量 ███░░░░░░░░░░│░ 25% 重置前安全
+  5 小時 ████░░░░░░░░░│░ 27% 資料不足
+AGY　無額度與 token 資料
+  使用次數：今天 3｜近 7 天 11（依本機對話資料夾）
+```
+
+- **進度條**：每個視窗只佔 1 行。「█」是已用、「░」是未用，「│」是 95% 的門檻標記（取代該位置的一格，後面至少留一格）。條寬依面板欄寬計算（約 6～24 格），整行不超過欄寬；極窄時整行以省略號截斷。
+- **顏色**：整行同一個顏色，百分比 ≥ 95 用 `error`、≥ 70 用 `warning`、其他用 `success`（引擎的主題色名稱）。
+- **行尾狀態**（依序判斷，第一個符合的就是）：讀數已過重置時間→「等新讀數」；已達 100%→「已滿」；已達 95%→「已達95%」；資料不足→「資料不足」；照目前速度重置前會到 95%→「⚠<時間>後95%」（例如「15時」「5.3時」「40分」）；其他→「重置前安全」。
+- 速度、重置時間、「根據 N 筆」等細節不再顯示（精簡版）；預測仍照下面的規則計算。
+
+- **資料來源（都不讀登入憑證）**：
+  - Claude：主迴圈每次 `turn.complete` 用 `$.session.usage()` 取 `rateLimits`（`five_hour`、`seven_day` 的 `percentUsed`、`resetsAt`），記一筆讀數；不必開著分頁，否則沒有歷史可算速度。subagent 的 `turn.complete` 不取樣。
+  - Codex：`scripts/read-quota.mjs` 找 `~/.codex/sessions/YYYY/MM/DD/` 最新的 `rollout-*.jsonl`，只讀檔尾 512 KB，取最後一筆 `rate_limits`（頂層或 `payload` 底下都認）；`primary` 當 5 小時、`secondary` 當週。最新檔沒有讀數時往較舊的檔案最多再找 5 個。讀數時間用紀錄檔的修改時間。
+  - AGY：同一支腳本只對 `~/.gemini/antigravity-cli/brain/`、`~/.gemini/antigravity/brain/` 做 `readdir`＋`stat`，數修改時間在今天、近 7 天的子資料夾（一個資料夾算一次），不讀任何檔案內容。AGY 的本機紀錄沒有額度或 token 欄位，CLI 也沒有查額度的指令，所以只能給次數；要剩餘額度得讀 OAuth 憑證，不在本外掛範圍。
+  - 腳本 stdout 只有 `{ codex: { primary, secondary, observedAt } | null, codexReason?, agy: { today, week } | null, agyReason? }`；對話內容、指令、帳號、credits 一律不輸出（有測試）。
+- **預測**：
+  - 同一來源、同一視窗的 `resetsAt` 相差 ≤ 120 秒算同一個重置週期；`resetsAt` 改變或百分比下降 ≥ 5 點算新週期，舊資料不參與。
+  - 速度＝回看範圍內（週用量 6 小時、5 小時用量 60 分鐘，以最後一筆讀數為準）第一筆到最後一筆的上升量 ÷ 時間。跨度不到 10 分鐘或上升不到 1 點時顯示「資料不足」，不硬給數字。其他裝置用掉的額度造成的跳升照實計入。
+  - 到 95% 的時間與重置時間比較：會先到就在行尾標「⚠<時間>後95%」，否則是「重置前安全」；已到顯示「已達95%」或「已滿」；最後一筆的重置時間已過顯示「等新讀數」。預測不算到 100% 的時間。
+- **重新讀取的時機**：切到額度分頁、按「重新整理」（`quota-refresh`，快捷鍵 `r`）、分頁開著時每次主迴圈 `turn.complete` 才跑腳本（逾時 10 秒）。
+- **歷史檔**：`<CLAUDE_CONFIG_DIR，未設則 ~/.claude>/plugin-data/session-picker/quota-history.json`，格式 `{ samples: [{ source, window, pct, resetsAt, at }] }`，只有這五個欄位。有新讀數且距上次寫入 ≥ 2 分鐘才寫；寫前先讀檔再合併去重，多個同時開著的 session 不會互相蓋掉。每個來源與視窗只留最近 7 天、最多 500 筆；相鄰同值且相隔不到 5 分鐘的不重複存。檔案損壞時顯示「歷史檔格式不符，改用本次記錄重建」並以這次的記錄覆寫；讀寫失敗只顯示一行淡色字，預測改用記憶體中的讀數。刪掉這個檔不影響其他功能。
+- 還沒有讀數時，Claude 顯示「還沒有讀數（Claude 要回覆過一次才有）」；`rateLimits` 是空的（不是訂閱方案）顯示「此帳號沒有額度視窗」。腳本失敗顯示「讀取 Codex／AGY 失敗（…）」，其他區塊照常。
+
 ### 回覆下方的複製按鈕（S5）
 
 每則助理回覆（`ui.render` 的 `AssistantMessage`）下方，若文字裡有 Windows 絕對路徑、網址或 ``` 圍欄裡的指令，就多一列複製按鈕。做法：先 `next(e)` 取得引擎的繪製，原樣放在上面，再把一列按鈕疊在它下面；`e.props` 一個字都不改（`isSummary`、`onScreen` 照引擎給的）。只改畫面，不改存下來的訊息（ctrl+o 看到的仍是原文）。
@@ -155,11 +190,16 @@
 ## 檔案
 
 - `.claude-plugin/plugin.json`、`types/index.d.ts`：外掛清單與狀態型別。
-- `hooks/hooks.json`、`hooks/register.tsx`：註冊指令、按鈕列、面板與五個分頁、自動開啟、即時活動追蹤 hook、記憶分頁的讀檔與複製、助理回覆下方的複製按鈕。
+- `hooks/hooks.json`、`hooks/register.tsx`：註冊指令、按鈕列、面板與六個分頁、自動開啟、即時活動追蹤 hook、額度取樣與歷史檔、記憶分頁的讀檔與複製、助理回覆下方的複製按鈕。
 - `hooks/copy-model.ts`：複製按鈕的純函式（路徑、網址與圍欄指令的抽取、標籤、狀態列顯示文字、訊息鍵；不碰 `$`）。
 - `hooks/flow-model.ts`：流程與記憶分頁的純函式（計畫書解析、目標摘要、秘密遮罩、活動紀錄、文字樹、路徑與 tokens 顯示；不碰 `$`，驗證器規定 `$` 不跨檔）。
 - `scripts/list-sessions.mjs`：唯讀 Node 腳本（只用內建模組），找出每個 transcript 最後一筆標題，輸出 `{ ok, dir, groups: { open, paused, closed } }`（每組至多 `--limit` 個，三組都滿就提前停止掃描）。transcript 可達 20 MB 以上，超過引擎 `$.fs.read` 的 4 MiB 上限，所以不在 hook 內讀檔。
 - `scripts/list-sessions.test.mjs`：腳本測試（`node --test`）。
+- `hooks/quota-model.ts`：額度分頁的純函式（分段、速度、預測、歷史合併與上限、腳本輸出驗證、顯示字串；不碰 `$`）。
+- `scripts/read-quota.mjs`：唯讀 Node 腳本（只用內建模組），讀 Codex 紀錄檔尾的 `rate_limits` 與 AGY 對話資料夾數，輸出規定欄位的 JSON；錯誤只寫原因、結束碼一律 0。
+- `scripts/read-quota.test.mjs`：讀取腳本測試（`node --test`，在暫存目錄造假資料）。
+- `tests/quota-model.test.ts`：額度純函式測試。
+- `tests/quota.test.tsx`：額度分頁（顯示、腳本失敗、歷史檔讀寫與合併、取樣時機、寫入間隔、設定目錄）測試。
 - `tests/register.test.tsx`：Session 分頁測試（S1）。
 - `tests/panel.test.tsx`：按鈕列、按鈕配色（淡黃色）、分頁、Tool、MCP、自動開啟測試。
 - `tests/flow-model.test.ts`：計畫書解析、目標摘要、文字樹、200 筆上限、秘密遮罩、路徑顯示的純函式測試。
@@ -167,7 +207,7 @@
 - `tests/copy-model.test.ts`：路徑與網址抽取、圍欄指令按鈕（各判斷規則、CRLF、縮排、未結尾圍欄、混合順序與去重、8 顆上限）、標籤、遮罩、狀態列顯示文字、訊息鍵的純函式測試。
 - `tests/copybar.test.tsx`：回覆下方複製按鈕（引擎繪製保留、摘要與無目標原樣回傳、開關、複製與狀態、失敗原因、8 顆上限、多行標題指令按鈕、配色）測試。
 - `tests/memory.test.tsx`：記憶分頁（已載入清單、記憶資料夾、看內容、複製路徑、不寫檔）測試。
-- `scripts/review-check.mjs`：依序跑 validate、plugin test、腳本測試。
+- `scripts/review-check.mjs`：依序跑 validate、plugin test、兩支腳本測試。
 - `tsconfig.json`：TypeScript 檢查設定。
 
 ## 試用一次
@@ -178,7 +218,7 @@
 claude --plugin-dir <外掛資料夾的完整路徑>
 ```
 
-進入後輸入框上方會出現 `控制台 Session Tool MCP 流程 記憶`。
+進入後輸入框上方會出現 `控制台 Session Tool MCP 流程 記憶 額度`。
 
 ## 雙擊啟動（Windows）
 
@@ -203,9 +243,10 @@ claude --plugin-dir <外掛資料夾的完整路徑>
   - 流程分頁：`$.fs.list`／`$.fs.read` 讀 `<session root>/planned/*.md`（只讀）；工具與 agent 活動來自 `tool.call`、`agent.spawn`、`turn.start`、`turn.complete` 事件（見上，只存摘要）。
   - 記憶分頁：`$.session.usage`（`memoryFiles`）、`$.fs.list` 列 AutoMem 所在資料夾、`$.fs.read` 讀你按「看內容」的那一個檔（只讀）；「複製路徑」用 `$.ui.copy`，只複製路徑文字。
   - 複製按鈕：只讀 `AssistantMessage` 的文字（樣式比對）與 `$.store` 的 `copyBar`；按下去用 `$.ui.copy` 複製該則訊息裡的路徑、網址或圍欄指令原文，不碰檔案、不執行程序（指令只是複製，不會被執行）。
-  - 環境變數：`CLAUDE_CONFIG_DIR`、`HOME`、`USERPROFILE`（只為了找上述設定檔）。
-- 寫：不寫任何檔案（`autoOpen`、`copyBar` 開關存在引擎的 `$.store`，不是檔案）。唯一對外動作是 `/resume <id>`、`/mcp enable|disable <名稱>`（由使用者按鈕觸發）與本外掛的一支 node 腳本（argv、無 shell）；記憶分頁只多一個動作：把路徑文字複製到剪貼簿。
-- 不使用 `$.http`、`$.fs.write`、`$.model`、`$.settings`、`$.session.messages`。
+  - 額度分頁：`$.session.usage`（`rateLimits`）；`scripts/read-quota.mjs` 讀 `~/.codex/sessions/` 最新紀錄檔的檔尾、列 AGY 對話資料夾（見上）；讀自己的歷史檔。
+  - 環境變數：`CLAUDE_CONFIG_DIR`、`HOME`、`USERPROFILE`（只為了找上述設定檔與歷史檔）。
+- 寫：只寫一個檔，額度分頁的歷史檔 `<CLAUDE_CONFIG_DIR 或 ~/.claude>/plugin-data/session-picker/quota-history.json`（只有讀數的五個欄位，見上）；`autoOpen`、`copyBar` 開關存在引擎的 `$.store`，不是檔案。唯一對外動作是 `/resume <id>`、`/mcp enable|disable <名稱>`（由使用者按鈕觸發）與本外掛的兩支 node 腳本（argv、無 shell）；記憶分頁只多一個動作：把路徑文字複製到剪貼簿。
+- 不使用 `$.http`、`$.model`、`$.settings`、`$.session.messages`。
 - 面板只顯示標題、相對時間、工具名稱與說明、伺服器名稱與狀態、計畫書節點與活動摘要，不顯示對話內容；唯一例外是你主動按「看內容」時顯示的那個記憶檔原文。
 
 ## 已知限制與不確定處
@@ -217,6 +258,7 @@ claude --plugin-dir <外掛資料夾的完整路徑>
 - 流程分頁的 hook 只由測試與驗證器檢查，尚未實機確認；本機沒有 `tsc`，型別只靠驗證器與測試執行把關。
 - 記憶分頁尚未實機確認：`$.session.usage` 的 `memoryFiles` 在實機是否含 AutoMem、剪貼簿在你的終端機是否真的寫入，都要實測；`ui.copy` 的 OSC 52 路徑不回報成功與否（見上）。
 - 複製按鈕與淡黃色配色尚未實機確認：非 `plain` 的按鈕（面板內的「重新整理」「看內容」等）在終端機會畫 `[ ]` 外框，外框字元的顏色由引擎決定，不一定是深色；請實機看可讀性。
+- 額度分頁尚未實機確認：`$.session.usage()` 的 `rateLimits` 在實機每輪是否都有值、Codex 紀錄格式日後是否改版（找不到欄位時顯示「讀不到」），都要實測；預測只是線性估計。
 - 自動開啟是否真的畫出，取決於終端機寬度與全螢幕（見上）；被拒時不會報錯。
 - 型別檔是 Claude Code 2.1.302 產生的（外掛內 `.claude-plugin/types/claude-code/index.d.ts`）。
 

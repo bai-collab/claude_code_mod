@@ -191,6 +191,7 @@ describe("記憶分頁：已載入的記憶檔", () => {
       "tab-mcp",
       "tab-flow",
       "tab-memory",
+      "tab-quota",
       "mem-view:0",
       "mem-copy:0",
       "mem-view:1",
@@ -283,8 +284,8 @@ describe("記憶分頁：看內容", () => {
     await press(pane, "mem-view:0");
 
     const shown = await texts(pane);
-    // 分頁列的每個按鈕現在都用有色 Text 畫（S5：Session、Tool、MCP、流程、[記憶]），路徑仍是本文的第一行。
-    const tabLabels = ["Session", "Tool", "MCP", "流程", "[記憶]"];
+    // 分頁列的每個按鈕現在都用有色 Text 畫（S5：Session、Tool、MCP、流程、[記憶]、額度），路徑仍是本文的第一行。
+    const tabLabels = ["Session", "Tool", "MCP", "流程", "[記憶]", "額度"];
     expect(shown.filter((line) => !tabLabels.includes(line))[0]).toBe("F:\\proj\\CLAUDE.md");
     expect(shown).toContain("# 專案規則");
     expect(shown).toContain("api_key=plain-visible-value");
@@ -296,6 +297,7 @@ describe("記憶分頁：看內容", () => {
       "tab-mcp",
       "tab-flow",
       "tab-memory",
+      "tab-quota",
       "mem-back",
       "mem-view-copy",
     ]);
