@@ -233,6 +233,7 @@ describe("流程分頁：計畫進度", () => {
       "tab-mcp",
       "tab-flow",
       "tab-memory",
+      "tab-quota",
       "plan-prev",
       "plan-next",
       "flow-refresh",
@@ -540,8 +541,8 @@ describe("按鈕列", () => {
     const band = await mountBand($);
 
     const buttons = await band.findAll({ type: "Button" });
-    expect(buttons.map((button) => button.key)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory"]);
-    expect(buttons.map((button) => button.text)).toEqual(["Session", "Tool", "MCP", "流程", "記憶"]);
+    expect(buttons.map((button) => button.key)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory", "band-quota"]);
+    expect(buttons.map((button) => button.text)).toEqual(["Session", "Tool", "MCP", "流程", "記憶", "額度"]);
     expect(buttons.every((button) => button.props.hotkey === undefined)).toBe(true);
     expect((await band.findAll({ type: "Text" })).map((text) => text.text)).toContain("別的外掛的列");
   });

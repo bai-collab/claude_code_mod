@@ -8,6 +8,7 @@ const checks = [
   ["claude", ["plugin", "validate", "."]],
   ["claude", ["plugin", "test", "."]],
   ["node", ["--test", "scripts/list-sessions.test.mjs"]],
+  ["node", ["--test", "scripts/read-quota.test.mjs"]],
 ];
 let failed = false;
 

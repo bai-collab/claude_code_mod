@@ -182,13 +182,14 @@ describe("按鈕列", () => {
 
     const band = await mountBand($);
 
-    expect(await keys(band)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory"]);
+    expect(await keys(band)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory", "band-quota"]);
     expect((await band.findAll({ type: "Button" })).map((button) => button.text)).toEqual([
       "Session",
       "Tool",
       "MCP",
       "流程",
       "記憶",
+      "額度",
     ]);
     expect(await texts(band)).toContain("別的外掛的列");
     expect(await band.findAll({ type: "Button", key: "band-mcp" })).toHaveLength(1);
@@ -212,7 +213,7 @@ describe("按鈕列", () => {
 
     const band = await mountBand($, { bodyColumns: 16 });
 
-    expect(await keys(band)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory"]);
+    expect(await keys(band)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory", "band-quota"]);
     expect(await texts(band)).not.toContain("控制台");
     const row = await band.find({ type: "Box", key: "band-row" });
     expect(row?.props.height).toBe(1);
@@ -241,7 +242,7 @@ describe("按鈕列", () => {
 const CHIP_BG = "#FFF3B0";
 const CHIP_FG = "#3B3000";
 const CHIP_ACTIVE_BG = "#F2C94C";
-const TABS_UNDER_TEST = ["session", "tool", "mcp", "flow", "memory"];
+const TABS_UNDER_TEST = ["session", "tool", "mcp", "flow", "memory", "quota"];
 
 async function boxHolding(view: Pane | Band, boxKey: string, buttonKey: string) {
   const box = await view.find({ type: "Box", key: boxKey });
@@ -268,8 +269,8 @@ describe("按鈕底色（色塊）", () => {
         expect(box?.props.backgroundColor).toBe(CHIP_BG);
         expect(box?.props.paddingX).toBe(1);
       }
-      expect(await keys(band)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory"]);
-      for (const label of ["Session", "Tool", "MCP", "流程", "記憶"]) {
+      expect(await keys(band)).toEqual(["band-session", "band-tool", "band-mcp", "band-flow", "band-memory", "band-quota"]);
+      for (const label of ["Session", "Tool", "MCP", "流程", "記憶", "額度"]) {
         expect((await band.find({ type: "Text", text: label }))?.props.color).toBe(CHIP_FG);
       }
       expect(await texts(band)).toContain("別的外掛的列");
@@ -348,6 +349,7 @@ describe("分頁切換", () => {
       "tab-mcp",
       "tab-flow",
       "tab-memory",
+      "tab-quota",
       "group-open",
       "group-paused",
       "group-closed",
@@ -358,7 +360,7 @@ describe("分頁切換", () => {
     await pane.press({ key: "tab-tool" });
     expect(await texts(pane)).toContain("共 3 個工具（內建 2／MCP 1）");
     expect((await pane.findAll({ type: "Button", key: "tab-tool" }))[0]?.text).toBe("[Tool]");
-    expect(await keys(pane)).toEqual(["tab-session", "tab-tool", "tab-mcp", "tab-flow", "tab-memory", "tool-refresh"]);
+    expect(await keys(pane)).toEqual(["tab-session", "tab-tool", "tab-mcp", "tab-flow", "tab-memory", "tab-quota", "tool-refresh"]);
 
     await pane.press({ key: "tab-mcp" });
     expect(await texts(pane)).toContain("共 3 個 MCP 伺服器");
@@ -400,7 +402,7 @@ describe("Tool 分頁", () => {
     expect(shown.indexOf("內建（2）")).toBeLessThan(shown.indexOf("Read  讀取檔案內容"));
     expect(shown.indexOf("MCP（1）")).toBeLessThan(shown.indexOf("mcp__linear__create_issue  建立 Linear 議題"));
     // 唯讀：除分頁與重新整理外沒有任何動作按鈕
-    expect(await keys(pane)).toEqual(["tab-session", "tab-tool", "tab-mcp", "tab-flow", "tab-memory", "tool-refresh"]);
+    expect(await keys(pane)).toEqual(["tab-session", "tab-tool", "tab-mcp", "tab-flow", "tab-memory", "tab-quota", "tool-refresh"]);
   });
 
   test("太長的一行依面板欄寬截斷並加省略號", async ($, on) => {
